@@ -2,18 +2,18 @@
 const bcrypt = require('bcryptjs');
 
 class User {
-  static async create({ email, password, name }) {
-    const hashedPassword = await bcrypt.hash(password, 12);
-    const stmt = db.prepare(
-      INSERT INTO users (email, password, name)
-      VALUES (?, ?, ?)
-    );
-    const result = stmt.run(email, hashedPassword, name);
+  static create({ name, email, password }) {
+    const hashedPassword = bcrypt.hashSync(password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
+    const stmt = db.prepare(`
+      INSERT INTO users (name, email, password, created_at, updated_at)
+      VALUES (?, ?, ?, datetime('now'), datetime('now'))
+    `);
+    const result = stmt.run(name, email, hashedPassword);
     return this.findById(result.lastInsertRowid);
   }
 
   static findById(id) {
-    const stmt = db.prepare('SELECT id, email, name, created_at FROM users WHERE id = ?');
+    const stmt = db.prepare('SELECT id, name, email, created_at, updated_at FROM users WHERE id = ?');
     return stmt.get(id);
   }
 
@@ -22,31 +22,62 @@ class User {
     return stmt.get(email);
   }
 
-  static async validatePassword(password, hashedPassword) {
-    return await bcrypt.compare(password, hashedPassword);
+  static findByEmailForAuth(email) {
+    const stmt = db.prepare('SELECT id, name, email, password FROM users WHERE email = ?');
+    return stmt.get(email);
   }
 
-  static update(id, data) {
-    const fields = [];
-    const values = [];
-    
-    if (data.name) {
-      fields.push('name = ?');
-      values.push(data.name);
-    }
-    if (data.email) {
-      fields.push('email = ?');
-      values.push(data.email);
-    }
-    
-    if (fields.length === 0) return this.findById(id);
-    
-    fields.push('updated_at = CURRENT_TIMESTAMP');
-    values.push(id);
-    
-    const stmt = db.prepare(UPDATE users SET +fields.join(', ')+ WHERE id = ?);
-    stmt.run(...values);
+  static findAll() {
+    const stmt = db.prepare('SELECT id, name, email, created_at, updated_at FROM users ORDER BY name');
+    return stmt.all();
+  }
+
+  static update(id, { name, email }) {
+    const stmt = db.prepare(`
+      UPDATE users 
+      SET name = ?, email = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `);
+    stmt.run(name, email, id);
     return this.findById(id);
+  }
+
+  static updatePassword(id, newPassword) {
+    const hashedPassword = bcrypt.hashSync(newPassword, parseInt(process.env.BCRYPT_ROUNDS) || 12);
+    const stmt = db.prepare(`
+      UPDATE users 
+      SET password = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `);
+    stmt.run(hashedPassword, id);
+    return true;
+  }
+
+  static delete(id) {
+    const stmt = db.prepare('DELETE FROM users WHERE id = ?');
+    return stmt.run(id);
+  }
+
+  static validatePassword(inputPassword, hashedPassword) {
+    return bcrypt.compareSync(inputPassword, hashedPassword);
+  }
+
+  static searchByNameOrEmail(query) {
+    const stmt = db.prepare(`
+      SELECT id, name, email, created_at 
+      FROM users 
+      WHERE name LIKE ? OR email LIKE ?
+      ORDER BY name
+      LIMIT 10
+    `);
+    const searchTerm = `%${query}%`;
+    return stmt.all(searchTerm, searchTerm);
+  }
+
+  static exists(email) {
+    const stmt = db.prepare('SELECT COUNT(*) as count FROM users WHERE email = ?');
+    const result = stmt.get(email);
+    return result.count > 0;
   }
 }
 
